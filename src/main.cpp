@@ -501,7 +501,7 @@ HRESULT CALLBACK TooltipWindow::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
       std::vector<wchar_t> fgBuf(GetWindowTextLength(hForeground) + 1);
       GetWindowText(hForeground, fgBuf.data(), fgBuf.size());
       std::wstring fgName(fgBuf.data());
-      if (1 || fgName == L"Path of Exile") {
+      if (fgName == L"Path of Exile") {
         if (!wnd->hooked_) {
           RegisterHotKey(hWnd, HotkeyId, MOD_CONTROL, 'D');
           wnd->hooked_ = true;
