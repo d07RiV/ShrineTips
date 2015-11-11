@@ -121,6 +121,10 @@ public:
 
   MatchData match(ItemTip const& tip);
 
+  int version() {
+    return effects[0].getInteger();
+  }
+
   bool update() {
     matchers.clear();
     HttpRequest request("http://poe.rivsoft.net/shrines/shrines.js");
@@ -240,12 +244,17 @@ private:
   ShrineData shrines_;
   POINT cursor_;
   HMENU tray_;
+  bool hooked_;
+  int version_;
+  void checkVersion();
 };
 
 enum {MenuRefresh = 100, MenuExit = 101, WM_TRAYNOTIFY = WM_USER + 104};
 
 TooltipWindow::TooltipWindow(HINSTANCE hInstance) {
   attempts_ = 0;
+  hooked_ = false;
+  version_ = 101;
   WNDCLASSEX wcx;
   memset(&wcx, 0, sizeof wcx);
   wcx.cbSize = sizeof wcx;
@@ -292,6 +301,16 @@ TooltipWindow::TooltipWindow(HINSTANCE hInstance) {
 TooltipWindow::~TooltipWindow() {
   DestroyMenu(tray_);
 }
+void TooltipWindow::checkVersion() {
+  int ver = shrines_.version();
+  if (ver > version_) {
+    if (MessageBox(hWnd_, L"A new version has been released. Would you like to open navigate to the downloads page?", L"Update",
+        MB_YESNO) == IDYES) {
+      ShellExecute(NULL, L"open", L"https://github.com/d07RiV/ShrineTips/releases", NULL, NULL, SW_SHOWNORMAL);
+    }
+    version_ = ver;
+  }
+}
 
 struct LineDrawer {
   LineDrawer(HWND hwnd, HDC hdc)
@@ -312,6 +331,7 @@ struct LineDrawer {
     SetBkColor(hDC, 0x121212);
 
     GetClientRect(hWnd, &rc);
+    wrc = rc;
     rc.top = rc.bottom = 5;
     rc.left += 5;
     rc.right -= 5;
@@ -324,8 +344,12 @@ struct LineDrawer {
 
   void line() {
     MoveToEx(hDC, 0, rc.bottom + 5, NULL);
-    LineTo(hDC, rc.right, rc.bottom + 5);
+    LineTo(hDC, wrc.right, rc.bottom + 5);
     rc.top = (rc.bottom += 10);
+  }
+  void fill(int delta) {
+    wrc.top = rc.top + delta;
+    ExtTextOut(hDC, 0, 0, ETO_OPAQUE, &wrc, NULL, 0, NULL);
   }
   void text(std::string const& str, uint32 color = 0x000000, bool large = false) {
     SetTextColor(hDC, color);
@@ -342,7 +366,20 @@ struct LineDrawer {
   HPEN hPen;
   HFONT hFontLarge;
   HFONT hFontSmall;
-  RECT rc;
+  RECT rc, wrc;
+};
+
+static uint32 Qualities[] = {
+  0x000000,
+  0x12129A, // 1
+  0x121278, // 2
+  0x121256, // 3
+  0x121234, // 4
+  0x121212, // 5
+  0x123412, // 6
+  0x125612, // 7
+  0x127812, // 8
+  0x129A12, // 9
 };
 
 int TooltipWindow::render(HDC hDC) {
@@ -353,25 +390,32 @@ int TooltipWindow::render(HDC hDC) {
     if (&group != &data_[0]) {
       painter.line();
     }
-    size_t index = 2;
+    size_t index = 0;
     if (group[0] == "Unknown") {
       painter.text(group[0], 0x0000FF, true);
       index = 1;
-    } else {
-      painter.text(group[0], 0xFFFFFF, true);
-      if (group.size() > 1) {
-        painter.text(group[1], 0xFFFFFF, false);
+    } else if (group.size() > 1) {
+      std::string effect = group[1];
+      if (effect.size() >= 2 && effect[0] == '$') {
+        SetBkColor(hDC, Qualities[effect[1] - '0']);
+        painter.fill(-4);
+        effect = effect.substr(2);
       }
+      painter.text(group[0], 0xFFFFFF, true);
+      painter.text(effect, 0xFFFFFF, false);
+      index = 2;
     }
     while (index < group.size()) {
       painter.text(group[index++], 0x999999, false);
     }
+    SetBkColor(hDC, 0x121212);
+    painter.fill(5);
   }
 
   return painter.rc.bottom;
 }
 
-enum { TimerUpdate = 102, TimerClipboard = 100, TimerCursor = 101 };
+enum { TimerUpdate = 102, TimerClipboard = 100, TimerCursor = 101, TimerForeground = 103, HotkeyId = 108 };
 
 HRESULT CALLBACK TooltipWindow::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
   TooltipWindow* wnd = nullptr;
@@ -385,8 +429,9 @@ HRESULT CALLBACK TooltipWindow::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
   if (!wnd) return DefWindowProc(hWnd, uMsg, wParam, lParam);
   switch (uMsg) {
   case WM_CREATE:
-    RegisterHotKey(hWnd, 0, MOD_CONTROL, 'D');
     SetTimer(hWnd, TimerUpdate, 1000 * 1800, NULL);
+    SetTimer(hWnd, TimerForeground, 1000, NULL);
+    wnd->checkVersion();
     return 0;
   case WM_PAINT: {
     PAINTSTRUCT ps;
@@ -395,7 +440,7 @@ HRESULT CALLBACK TooltipWindow::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
     return 0;
   }
   case WM_HOTKEY:
-    if (wParam == 0) {
+    if (wParam == HotkeyId) {
       wnd->clearClipboard();
       wnd->attempts_ = 0;
 
@@ -426,7 +471,7 @@ HRESULT CALLBACK TooltipWindow::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
         }
       } else {
         wnd->data_ = wnd->shrines_.match(item);
-        SetWindowPos(hWnd, NULL, 0, 0, 250, 1024, SWP_NOZORDER | SWP_NOMOVE | SWP_HIDEWINDOW | SWP_NOACTIVATE);
+        SetWindowPos(hWnd, NULL, 0, 0, 300, 1024, SWP_NOZORDER | SWP_NOMOVE | SWP_HIDEWINDOW | SWP_NOACTIVATE);
         HDC hDC = GetDC(hWnd);
         int height = wnd->render(hDC);
         ReleaseDC(hWnd, hDC);
@@ -434,8 +479,8 @@ HRESULT CALLBACK TooltipWindow::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
         GetCursorPos(&pt);
         int width = GetSystemMetrics(SM_CXSCREEN);
         SetWindowPos(hWnd, HWND_TOPMOST,
-          pt.x + 10 + 250 > width - 50 ? pt.x - 10 - 250 : pt.x + 10,
-          std::max<int>(pt.y - height, 50), 250, height + 5,
+          pt.x + 10 + 300 > width - 50 ? pt.x - 10 - 300 : pt.x + 10,
+          std::max<int>(pt.y - height, 50), 300, height + 5,
           SWP_SHOWWINDOW | SWP_NOACTIVATE);
         KillTimer(hWnd, wParam);
         wnd->cursor_ = pt;
@@ -443,12 +488,29 @@ HRESULT CALLBACK TooltipWindow::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
       }
     } else if (wParam == TimerUpdate) {
       wnd->shrines_.update();
+      wnd->checkVersion();
     } else if (wParam == TimerCursor) {
       POINT pt;
       GetCursorPos(&pt);
       if (std::abs(pt.x - wnd->cursor_.x) > 15 || std::abs(pt.y - wnd->cursor_.y) > 15) {
         ShowWindow(hWnd, SW_HIDE);
         KillTimer(hWnd, wParam);
+      }
+    } else if (wParam == TimerForeground) {
+      HWND hForeground = GetForegroundWindow();
+      std::vector<wchar_t> fgBuf(GetWindowTextLength(hForeground) + 1);
+      GetWindowText(hForeground, fgBuf.data(), fgBuf.size());
+      std::wstring fgName(fgBuf.data());
+      if (1 || fgName == L"Path of Exile") {
+        if (!wnd->hooked_) {
+          RegisterHotKey(hWnd, HotkeyId, MOD_CONTROL, 'D');
+          wnd->hooked_ = true;
+        }
+      } else {
+        if (wnd->hooked_) {
+          UnregisterHotKey(hWnd, HotkeyId);
+          wnd->hooked_ = false;
+        }
       }
     }
     return 0;
@@ -463,6 +525,7 @@ HRESULT CALLBACK TooltipWindow::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
       pt.x, pt.y, hWnd, NULL);
     if (result == MenuRefresh) {
       wnd->shrines_.update();
+      wnd->checkVersion();
     } else {
       PostQuitMessage(0);
     }

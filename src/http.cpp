@@ -35,7 +35,7 @@ HttpRequest::HttpRequest(std::string const& url, RequestType type)
     L"HTTP/1.1",
     WINHTTP_NO_REFERER,
     WINHTTP_DEFAULT_ACCEPT_TYPES,
-    urlComp.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
+    (urlComp.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0) | WINHTTP_FLAG_BYPASS_PROXY_CACHE);
 }
 HttpRequest::~HttpRequest() {
   if (request_) WinHttpCloseHandle(request_);
