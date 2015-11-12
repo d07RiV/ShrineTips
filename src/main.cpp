@@ -195,7 +195,7 @@ MatchData ShrineData::match(ItemTip const& tip) {
   std::vector<std::string> unknown;
   size_t hasImplicit = 0;
   for (size_t i = 0; i < tip.sections.size(); ++i) {
-    if (tip.sections[i].size() == 1 && i == 0) {
+    if (tip.sections[i].size() == 1 && i == 0 && tip.sections.size() > 1) {
       hasImplicit = 1;
       continue;
     }
@@ -254,7 +254,7 @@ enum {MenuRefresh = 100, MenuExit = 101, WM_TRAYNOTIFY = WM_USER + 104};
 TooltipWindow::TooltipWindow(HINSTANCE hInstance) {
   attempts_ = 0;
   hooked_ = false;
-  version_ = 101;
+  version_ = 102;
   WNDCLASSEX wcx;
   memset(&wcx, 0, sizeof wcx);
   wcx.cbSize = sizeof wcx;
@@ -465,7 +465,7 @@ HRESULT CALLBACK TooltipWindow::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
       ItemTip item;
       if (!wnd->getClipboard(clip) ||
           !item.parse(utf16_to_utf8(clip)) ||
-          item.rarity != "rare") {
+          (item.rarity != "rare" && item.rarity != "magic")) {
         if (++wnd->attempts_ > 10) {
           KillTimer(hWnd, wParam);
         }
